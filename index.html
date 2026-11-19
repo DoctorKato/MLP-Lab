@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh-CN" data-type="software" data-radius="soft" data-motion="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="page-type" content="software">
+<meta name="site-kind" content="software">
+<meta name="color-scheme" content="light">
+<title>MLP 参数学习实验室 · 人工智能通识第 15 章课后作业 · DoctorKato</title>
+<meta name="description" content="2–2–1 多层感知机学习 XOR 的全部过程：手写前向、反向传播与 Adam，在浏览器里实时看到决策曲面、隐藏层坐标、损失曲线和 9 个参数。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="MLP 参数学习实验室 · DoctorKato">
+<meta property="og:description" content="9 个参数、300 轮 Adam，看清 MLP 怎样学会 XOR。">
+<meta name="theme-color" content="#F3EFE4">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23F3EFE4'/%3E%3Cg stroke='%2315181A' stroke-width='1.2'%3E%3Cpath d='M8 10L16 10M8 10L16 22M8 22L16 10M8 22L16 22M16 10L24 16M16 22L24 16'/%3E%3C/g%3E%3Cg fill='%23F3EFE4' stroke='%2315181A' stroke-width='1.6'%3E%3Ccircle cx='8' cy='10' r='3'/%3E%3Ccircle cx='8' cy='22' r='3'/%3E%3Ccircle cx='16' cy='10' r='3'/%3E%3Ccircle cx='16' cy='22' r='3'/%3E%3Ccircle cx='24' cy='16' r='3' fill='%23C6432B' stroke='%23C6432B'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+
+<!--
+  PLAN — kind: software（课程实验页，tech）
+  deal: 骨白纸底 #F3EFE4 / 墨黑 #15181A / 朱砂 #C6432B（类别 1 与主操作）/ 深青 #1F5B57（类别 0）
+  pairing: hero 用实时决策曲面，页面只保留一次入场训练动画（dealt moment）
+  sections: hero · 01 problem · 02 hidden · 03 lab · 04 impl（深色带）· 05 brief
+-->
+
+<header class="site-head">
+  <div class="wrap head-in">
+    <a class="brand" href="#top" aria-label="DoctorKato MLP 实验室首页">
+      <span class="brand-name">DoctorKato</span>
+      <span class="brand-tag">MLP LAB</span>
+    </a>
+    <nav class="nav" aria-label="页面导航">
+      <a href="#problem">单层</a>
+      <a href="#hidden">隐藏层</a>
+      <a href="#lab">实验台</a>
+      <a href="#impl">实现</a>
+      <a href="#brief">作业</a>
+    </nav>
+    <a class="btn btn--small" href="#lab">开始训练<span class="ar" aria-hidden="true">→</span></a>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero" id="top" data-enter>
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="kicker enter">人工智能通识 · 第 15 章 人工神经元网络 · 课后作业</p>
+        <h1 class="enter">MLP 参数学习<br>实验室</h1>
+        <p class="hero-lead enter">2 个输入、2 个隐藏单元、1 个输出，共 9 个可学参数。四个 XOR 样本训练 300 轮，看权重怎样把一条切不开的直线，弯成一张能分开对角的曲面。</p>
+        <ul class="spec enter" aria-label="实验配置">
+          <li><span>样本</span><b>4</b></li>
+          <li><span>参数</span><b>9</b></li>
+          <li><span>轮次</span><b>300</b></li>
+          <li><span>学习率</span><b>0.03</b></li>
+        </ul>
+        <div class="hero-actions enter">
+          <a class="btn" href="#lab">开始训练<span class="ar" aria-hidden="true">→</span></a>
+          <a class="btn btn--ghost" href="#impl">读实现</a>
+        </div>
+      </div>
+
+      <div class="hero-lab enter" aria-label="训练监视器">
+        <div class="panel-head">
+          <span>Decision surface</span>
+          <span class="head-right"><i class="dot dot-a" aria-hidden="true"></i>0<i class="dot dot-b" aria-hidden="true"></i>1</span>
+        </div>
+        <div class="canvas-box hero-canvas">
+          <canvas id="heroCanvas" role="img" aria-label="XOR 决策曲面：骨白底上，深青为类别 0 区域，朱砂为类别 1 区域，中间是分类边界"></canvas>
+        </div>
+        <div class="hero-strip">
+          <div><span>Epoch</span><b id="heroEpoch">000</b></div>
+          <div><span>Loss</span><b id="heroLoss">0.562</b></div>
+          <div><span>Correct</span><b id="heroAcc">2 / 4</b></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="problem">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <p class="eyebrow">01 / Single layer</p>
+          <h2>一条直线，止步于 XOR</h2>
+        </div>
+        <p class="sec-lead">单层感知器把输入加权求和，再按阈值输出 0 或 1。它的边界永远是一条直线；XOR 的两类点在对角线上交错，直线最多只能判对三个。</p>
+      </div>
+
+      <div class="split split--7-5">
+        <div class="panel">
+          <div class="panel-head">
+            <span>单层感知器 · 拖动参数</span>
+            <span class="head-right"><b id="linScore" class="score">3 / 4</b></span>
+          </div>
+          <div class="canvas-box lin-canvas">
+            <canvas id="linCanvas" role="img" aria-label="单层感知器的分类直线示意，四个 XOR 数据点分布在四个角"></canvas>
+          </div>
+          <div class="controls">
+            <label class="field" for="w1">
+              <span class="field-label">w₁</span>
+              <input id="w1" type="range" min="-3" max="3" step="0.1" value="1">
+              <output id="w1v" class="field-val">1.0</output>
+            </label>
+            <label class="field" for="w2">
+              <span class="field-label">w₂</span>
+              <input id="w2" type="range" min="-3" max="3" step="0.1" value="1">
+              <output id="w2v" class="field-val">1.0</output>
+            </label>
+            <label class="field" for="bias">
+              <span class="field-label">b</span>
+              <input id="bias" type="range" min="-3" max="3" step="0.1" value="-0.5">
+              <output id="biasv" class="field-val">−0.5</output>
+            </label>
+            <p class="field-note" id="linNote">判定式 z = w₁x₁ + w₂x₂ + b；z ≥ 0 输出 1。上限是 3 / 4。</p>
+          </div>
+        </div>
+
+        <div class="side">
+          <div class="formula" aria-label="单层感知器公式">
+            <span class="formula-label">判定</span>
+            <code>z = w₁x₁ + w₂x₂ + b</code>
+            <code>y = 1&nbsp;&nbsp;if&nbsp;&nbsp;z ≥ 0</code>
+          </div>
+          <p class="body-copy">权重决定直线的方向，偏置让它平移。无论怎么调，这条直线都无法同时把 (0,0)、(1,1) 放进一侧，(0,1)、(1,0) 放进另一侧。</p>
+          <ol class="timeline">
+            <li><b>1943</b><span>麦卡洛克与皮茨提出阈值单元，用加权求和与阈值模拟“与”“或”。</span></li>
+            <li><b>1957–58</b><span>罗森布拉特提出感知器，权重可以按带标签样本调整。</span></li>
+            <li><b>1969</b><span>闵斯基与帕普特分析单层感知器的局限，指出 XOR 这类问题需要中间层。</span></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec sec--paper" id="hidden">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <p class="eyebrow">02 / Hidden space</p>
+          <h2>隐藏层换了一套坐标</h2>
+        </div>
+        <p class="sec-lead">两个隐藏单元各自盯住一个角：h₁ 对 (1,0) 响应，h₂ 对 (0,1) 响应。同一个输入被映射到 (h₁, h₂) 之后，两个对角点几乎落到原点，输出层一条直线就能分开。</p>
+      </div>
+
+      <div class="split split--5-7">
+        <div class="side side--tight">
+          <h3>训练 300 轮的隐藏表示</h3>
+          <table class="matrix-table">
+            <caption class="sr-only">四组 XOR 输入在隐藏层的激活值</caption>
+            <thead><tr><th scope="col">输入 x₁x₂</th><th scope="col">h₁</th><th scope="col">h₂</th><th scope="col">目标</th></tr></thead>
+            <tbody id="hiddenTable">
+              <tr><td>0 0</td><td>0.03</td><td>0.03</td><td>0</td></tr>
+              <tr><td>0 1</td><td>0.00</td><td>0.94</td><td>1</td></tr>
+              <tr><td>1 0</td><td>0.94</td><td>0.00</td><td>1</td></tr>
+              <tr><td>1 1</td><td>0.03</td><td>0.03</td><td>0</td></tr>
+            </tbody>
+          </table>
+          <p class="body-copy">输出层的分界是 v₁h₁ + v₂h₂ + b₀ = 0。训练后 v₁、v₂ 约为 8.2，b₀ 约为 −4.0，两个对角落到直线下方，另外两个被推上去。这条线不是手写的，是学出来的。</p>
+          <div class="stat-line">
+            <div><span>输出层分界</span><b>h₁ + h₂ ≈ 0.49</b></div>
+            <div><span>隐藏层宽度</span><b>2</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <span>Hidden space · h₁ × h₂</span>
+            <span class="head-right">300 epochs</span>
+          </div>
+          <div class="canvas-box hidden-canvas">
+            <canvas id="hiddenCanvas" role="img" aria-label="隐藏层空间散点图：00 与 11 位于原点附近，01 与 10 位于两个轴上，被一条直线分开"></canvas>
+          </div>
+          <div class="panel-foot">
+            <span><i class="dot dot-a" aria-hidden="true"></i>类别 0</span>
+            <span><i class="dot dot-b" aria-hidden="true"></i>类别 1</span>
+            <span class="foot-hint">点为该样本的 (h₁, h₂)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="lab">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <p class="eyebrow">03 / The lab</p>
+          <h2>实验台：每一轮改的是 9 个数</h2>
+        </div>
+        <p class="sec-lead">前向传播得到概率，二元交叉熵给出损失，反向传播算出 9 个梯度，Adam 按学习率更新。可以暂停、单步，或把学习率调到 0.2 看它冲得更快。</p>
+      </div>
+
+      <div class="lab-grid">
+        <div class="panel">
+          <div class="panel-head">
+            <span>Decision surface</span>
+            <span class="head-right"><span id="labEpoch">EPOCH 000</span></span>
+          </div>
+          <div class="canvas-box lab-canvas">
+            <canvas id="labCanvas" role="img" aria-label="训练中的 XOR 决策曲面，背景颜色表示模型输出概率"></canvas>
+          </div>
+          <div class="panel-foot">
+            <span><i class="dot dot-a" aria-hidden="true"></i>类别 0 区域</span>
+            <span><i class="dot dot-b" aria-hidden="true"></i>类别 1 区域</span>
+            <span class="foot-hint">颜色越深，概率越接近 0 或 1</span>
+          </div>
+        </div>
+
+        <div class="panel side-panel">
+          <div class="panel-head">
+            <span>Forward pass · 2–2–1</span>
+            <span class="head-right">Sigmoid</span>
+          </div>
+          <div class="net-box">
+            <svg id="net" viewBox="0 0 360 250" role="img" aria-label="2-2-1 网络结构，连线粗细与颜色表示当前权重">
+              <g class="edges">
+                <line data-w="w00" x1="54" y1="80" x2="190" y2="80"></line>
+                <line data-w="w01" x1="54" y1="80" x2="190" y2="170"></line>
+                <line data-w="w10" x1="54" y1="170" x2="190" y2="80"></line>
+                <line data-w="w11" x1="54" y1="170" x2="190" y2="170"></line>
+                <line data-w="v0" x1="190" y1="80" x2="316" y2="125"></line>
+                <line data-w="v1" x1="190" y1="170" x2="316" y2="125"></line>
+              </g>
+              <g class="wlabels">
+                <text data-wl="w00" x="122" y="69">2.0</text>
+                <text data-wl="w01" x="96" y="121">-2.0</text>
+                <text data-wl="w10" x="150" y="121">-2.0</text>
+                <text data-wl="w11" x="122" y="187">2.0</text>
+                <text data-wl="v0" x="253" y="95">3.0</text>
+                <text data-wl="v1" x="253" y="159">3.0</text>
+              </g>
+              <g class="nodes">
+                <g class="node-group"><circle class="node" cx="54" cy="80" r="23"></circle><text class="node-label" x="54" y="85">x₁</text><text class="node-sub" data-in="0" x="54" y="44">0</text></g>
+                <g class="node-group"><circle class="node" cx="54" cy="170" r="23"></circle><text class="node-label" x="54" y="175">x₂</text><text class="node-sub" data-in="1" x="54" y="212">0</text></g>
+                <g class="node-group"><circle class="node node--h" cx="190" cy="80" r="23"></circle><text class="node-label" x="190" y="85">h₁</text><text class="node-sub" data-h="0" x="190" y="44">0.27</text></g>
+                <g class="node-group"><circle class="node node--h" cx="190" cy="170" r="23"></circle><text class="node-label" x="190" y="175">h₂</text><text class="node-sub" data-h="1" x="190" y="212">0.27</text></g>
+                <g class="node-group"><circle class="node node--out" cx="316" cy="125" r="26"></circle><text class="node-label" x="316" y="129">ŷ</text><text class="node-sub" data-out x="316" y="86">0.29</text></g>
+              </g>
+            </svg>
+          </div>
+          <div class="chips" role="group" aria-label="选择要查看的样本">
+            <button type="button" class="chip" data-i="0" aria-pressed="false">00</button>
+            <button type="button" class="chip is-on" data-i="1" aria-pressed="true">01</button>
+            <button type="button" class="chip" data-i="2" aria-pressed="false">10</button>
+            <button type="button" class="chip" data-i="3" aria-pressed="false">11</button>
+          </div>
+          <dl class="readout">
+            <div><dt>h₁</dt><dd id="roH0">0.05</dd></div>
+            <div><dt>h₂</dt><dd id="roH1">0.73</dd></div>
+            <div><dt>z</dt><dd id="roZ">-0.17</dd></div>
+            <div><dt>ŷ</dt><dd id="roP">0.46</dd></div>
+          </dl>
+          <p class="readout-note">当前样本 <span id="roSample">x₁=0, x₂=1</span>，目标 <span id="roY">1</span>。</p>
+        </div>
+      </div>
+
+      <div class="transport panel">
+        <div class="transport-main">
+          <button type="button" class="btn" id="btnPlay"><span id="playLabel">播放训练</span><span class="ar" aria-hidden="true">→</span></button>
+          <button type="button" class="btn btn--ghost" id="btnStep">单步 +1</button>
+          <button type="button" class="btn btn--ghost" id="btnReset">重置</button>
+        </div>
+        <label class="lr" for="lr">
+          <span>学习率 <b id="lrValue">0.030</b></span>
+          <input id="lr" type="range" min="0.005" max="0.2" step="0.005" value="0.03">
+        </label>
+        <div class="progress">
+          <div class="progress-head"><span>轮次</span><b id="epochText">0 / 300</b></div>
+          <div class="bar"><i id="epochBar" style="width:0%"></i></div>
+        </div>
+      </div>
+
+      <div class="lab-bottom">
+        <div class="panel">
+          <div class="panel-head">
+            <span>Loss · binary cross-entropy</span>
+            <span class="head-right">当前 <b id="lossNow">0.562</b></span>
+          </div>
+          <div class="canvas-box loss-canvas">
+            <canvas id="lossCanvas" role="img" aria-label="训练损失随轮次变化的曲线，从 0.562 下降到 0.03 左右"></canvas>
+          </div>
+          <div class="panel-foot">
+            <span>正确 <b id="accNow">2 / 4</b></span>
+            <span>首次 4 / 4 <b id="firstFull">—</b></span>
+            <span class="foot-hint">曲线为每轮记录一次</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <span>Parameters · 9</span>
+            <span class="head-right">值 / 梯度</span>
+          </div>
+          <div class="param-table">
+            <div class="param-row param-head">
+              <span>W（输入 → 隐藏）</span>
+              <span class="param-cells"><b>h₁</b><b>h₂</b></span>
+            </div>
+            <div class="param-row">
+              <span>x₁</span>
+              <span class="param-cells">
+                <span class="cell"><b data-p="w00">2.00</b><i class="gbar"><u data-g="w00"></u></i></span>
+                <span class="cell"><b data-p="w01">-2.00</b><i class="gbar"><u data-g="w01"></u></i></span>
+              </span>
+            </div>
+            <div class="param-row">
+              <span>x₂</span>
+              <span class="param-cells">
+                <span class="cell"><b data-p="w10">-2.00</b><i class="gbar"><u data-g="w10"></u></i></span>
+                <span class="cell"><b data-p="w11">2.00</b><i class="gbar"><u data-g="w11"></u></i></span>
+              </span>
+            </div>
+            <div class="param-row">
+              <span>偏置 b</span>
+              <span class="param-cells">
+                <span class="cell"><b data-p="bh0">-1.00</b><i class="gbar"><u data-g="bh0"></u></i></span>
+                <span class="cell"><b data-p="bh1">-1.00</b><i class="gbar"><u data-g="bh1"></u></i></span>
+              </span>
+            </div>
+            <div class="param-row">
+              <span>v（隐藏 → 输出）</span>
+              <span class="param-cells">
+                <span class="cell"><b data-p="v0">3.00</b><i class="gbar"><u data-g="v0"></u></i></span>
+                <span class="cell"><b data-p="v1">3.00</b><i class="gbar"><u data-g="v1"></u></i></span>
+              </span>
+            </div>
+            <div class="param-row">
+              <span>输出偏置 b₀</span>
+              <span class="param-cells param-cells--single">
+                <span class="cell"><b data-p="bo">-2.50</b><i class="gbar"><u data-g="bo"></u></i></span>
+              </span>
+            </div>
+          </div>
+          <p class="param-note">梯度条按本轮 9 个梯度中的最大值归一化；朱砂表示梯度为正，深青表示梯度为负。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec sec--dark" id="impl">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <p class="eyebrow">04 / Implementation</p>
+          <h2>五件事，一次反向传播</h2>
+        </div>
+        <p class="sec-lead">课程把实现拆成五步。下面的 JavaScript 不依赖框架，梯度由链式法则手写；每一轮与 PyTorch 的 loss.backward() 和 optimizer.step() 对应。</p>
+      </div>
+
+      <ol class="steps">
+        <li class="step"><span class="step-n">01</span><h3>张量</h3><p>X 为 4×2，Y 为 4×1。四个 XOR 样本整批训练，一次更新用完全部样本。</p></li>
+        <li class="step"><span class="step-n">02</span><h3>模型</h3><p>h = σ(xW + b)，z = h·v + b₀。2 个隐藏单元，Sigmoid 激活。</p></li>
+        <li class="step"><span class="step-n">03</span><h3>损失</h3><p>二元交叉熵直接作用在原始分数 z 上：max(z,0) − zy + log(1+e<sup>−|z|</sup>)。</p></li>
+        <li class="step"><span class="step-n">04</span><h3>求梯度</h3><p>δ = (p − y)/4 逐层回传，得到 ∂L/∂W、∂L/∂b、∂L/∂v、∂L/∂b₀ 共 9 个分量。</p></li>
+        <li class="step"><span class="step-n">05</span><h3>更新</h3><p>Adam：θ ← θ − lr·m̂ /(√v̂ + ε)，β₁=0.9，β₂=0.999。</p></li>
+      </ol>
+
+      <div class="code-grid">
+        <div class="code-wrap">
+          <div class="code-head"><span>PyTorch · 与课程同一套设置</span><span>2–2–1</span></div>
+          <pre><code>import torch, torch.nn.functional as F
+torch.set_default_dtype(torch.float64)
+
+x = torch.tensor([[0.,0.],[0.,1.],[1.,0.],[1.,1.]])
+y = torch.tensor([[0.],[1.],[1.],[0.]])
+
+W  = torch.nn.Parameter(torch.tensor([[2.,-2.],[-2.,2.]]))
+bh = torch.nn.Parameter(torch.tensor([-1.,-1.]))
+v  = torch.nn.Parameter(torch.tensor([[3.],[3.]]))
+b0 = torch.nn.Parameter(torch.tensor([-2.5]))
+opt = torch.optim.Adam([W, bh, v, b0], lr=0.03)
+
+for epoch in range(300):
+    opt.zero_grad(set_to_none=True)
+    h = torch.sigmoid(x @ W + bh)   <span class="c"># 2 个隐藏值</span>
+    z = h @ v + b0                  <span class="c"># 原始输出分数</span>
+    loss = F.binary_cross_entropy_with_logits(z, y)
+    loss.backward()                 <span class="c"># 框架自动求导</span>
+    opt.step()                      <span class="c"># Adam 更新</span></code></pre>
+        </div>
+
+        <div class="code-wrap">
+          <div class="code-head"><span>JavaScript · 本页实际运行</span><span>手写梯度</span></div>
+          <pre><code>function forward(p, x) {
+  const h0 = sig(x[0]*p.w00 + x[1]*p.w10 + p.bh0);
+  const h1 = sig(x[0]*p.w01 + x[1]*p.w11 + p.bh1);
+  const z  = h0*p.v0 + h1*p.v1 + p.bo;
+  return { h0, h1, z, p: sig(z) };
+}
+
+function backward(model) {
+  const g = { w00:0, w01:0, w10:0, w11:0,
+              bh0:0, bh1:0, v0:0, v1:0, bo:0 };
+  for (let i = 0; i &lt; 4; i++) {
+    const { h0, h1, p } = forward(model.p, X[i]);
+    const d = (p - Y[i]) / 4;            <span class="c">// dL/dz</span>
+    g.v0 += h0*d; g.v1 += h1*d; g.bo += d;
+    const d0 = d * model.p.v0 * h0 * (1-h0);
+    const d1 = d * model.p.v1 * h1 * (1-h1);
+    g.w00 += X[i][0]*d0; g.bh0 += d0; g.w10 += X[i][1]*d0;
+    g.w01 += X[i][0]*d1; g.bh1 += d1; g.w11 += X[i][1]*d1;
+  }
+  return g;
+}</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="brief">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <p class="eyebrow">05 / Brief</p>
+          <h2>作业说明</h2>
+        </div>
+        <p class="sec-lead">页面本身就是答案：实现、训练、可视化都在浏览器里完成，不依赖外部图片或模型文件。</p>
+      </div>
+
+      <div class="split split--7-5">
+        <div class="side side--tight">
+          <h3>本次交付</h3>
+          <ul class="deliver">
+            <li>
+              <svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4L16 5.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span><b>手写实现</b>：2–2–1 前向传播、BCE 损失与反向传播，不使用自动微分。</span>
+            </li>
+            <li>
+              <svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4L16 5.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span><b>三种视图</b>：决策曲面、隐藏层坐标、损失曲线；9 个参数与本轮梯度同步刷新。</span>
+            </li>
+            <li>
+              <svg class="tick" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4L16 5.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span><b>可复现</b>：固定初始化、整批梯度、Adam 0.03、300 轮；暂停、单步、重置都可操作。</span>
+            </li>
+          </ul>
+
+          <h3 class="mt">三个探究</h3>
+          <ol class="tasks">
+            <li><b>学习率对比</b><span>分别用 0.005、0.03、0.2 跑满 300 轮，记录最终损失与“首次 4 / 4”的轮次。</span></li>
+            <li><b>对称性</b><span>把 app.js 初始化中的 v₁、v₂ 同时改为 −3 再训练，观察结果并解释初始化为什么会改变收敛路径。</span></li>
+            <li><b>手推梯度</b><span>写出 ∂L/∂W 的链式法则，与本页参数表中的梯度条逐项对照。</span></li>
+          </ol>
+        </div>
+
+        <aside class="submit">
+          <h3>提交信息</h3>
+          <dl>
+            <dt>作者</dt><dd>DoctorKato</dd>
+            <dt>课程</dt><dd>人工智能通识</dd>
+            <dt>章节</dt><dd>第 15 章 · 人工神经元网络</dd>
+            <dt>日期</dt><dd>2026-11</dd>
+            <dt>主页</dt><dd><a class="link" href="https://github.com/DoctorKato">github.com/DoctorKato</a></dd>
+          </dl>
+          <p class="submit-note">参考：课程教材第 15 章；页面结构参考了 <a class="link" href="https://hugohe8380.github.io/XOR-MLP-Visualizer/">XOR MLP Visualizer</a> 与 <a class="link" href="https://alphekka221.github.io/myweb/MLP.html">MLP 作业页</a>。实现、文案与视觉独立完成。</p>
+        </aside>
+      </div>
+
+      <footer class="foot">
+        <div class="foot-in">
+          <span>教材：王东、马少平《人工智能通识》· 清华大学出版社 · 2025</span>
+          <span><a class="link" href="https://zhumy.github.io/Introduction_to_Artificial_Intelligence/">课程站点</a> · 全部图形在浏览器内实时计算</span>
+          <span>DoctorKato · 2026</span>
+        </div>
+      </footer>
+    </div>
+  </section>
+
+</main>
+
+<noscript>
+  <p class="noscript">本页的决策曲面、参数和损失曲线由 JavaScript 实时计算。开启 JavaScript 后可完整使用。</p>
+</noscript>
+
+<script src="app.js"></script>
+</body>
+</html>
